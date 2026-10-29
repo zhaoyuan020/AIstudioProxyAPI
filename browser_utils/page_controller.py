@@ -79,10 +79,19 @@ class PageController(
         await self._check_disconnect(
             check_client_disconnected, "Start Parameter Adjustment"
         )
-        temp = request_params.get("temperature", DEFAULT_TEMPERATURE)
-        await self._adjust_temperature(
-            temp, page_params_cache, params_cache_lock, check_client_disconnected
-        )
+        # [patch 2026-10-29] Do NOT inject DEFAULT_* values here.
+        # This method shadows the ParametersController.adjust_parameters mixin, so
+        # it is the one that actually runs. It used to always push temperature /
+        # top_p / stop even when the client sent nothing -> on the current UI that
+        # meant 2 x 1.2s locator timeouts + a parameter-cache clear per request
+        # (and, after the stop-sequence selector fix, it also injected the
+        # DEFAULT_STOP_SEQUENCES word into the page). Only forward what the client
+        # actually provided.
+        temp = request_params.get("temperature")
+        if temp is not None:
+            await self._adjust_temperature(
+                temp, page_params_cache, params_cache_lock, check_client_disconnected
+            )
         max_tokens = request_params.get("max_output_tokens", DEFAULT_MAX_OUTPUT_TOKENS)
         await self._adjust_max_tokens(
             max_tokens,
@@ -92,12 +101,15 @@ class PageController(
             parsed_model_list,
             check_client_disconnected,
         )
-        stop = request_params.get("stop", DEFAULT_STOP_SEQUENCES)
+        # Always call with [] when nothing was sent: that clears stop words left
+        # over from a previous request instead of leaking them to the next caller.
+        stop = request_params.get("stop") or []
         await self._adjust_stop_sequences(
             stop, page_params_cache, params_cache_lock, check_client_disconnected
         )
-        top_p = request_params.get("top_p", DEFAULT_TOP_P)
-        await self._adjust_top_p(top_p, check_client_disconnected)
+        top_p = request_params.get("top_p")
+        if top_p is not None:
+            await self._adjust_top_p(top_p, check_client_disconnected)
         await self._ensure_tools_panel_expanded(check_client_disconnected)
 
         # Force disable URL context if function calling is active
@@ -169,7 +181,15 @@ class PageController(
                 button_clicked = False
                 is_btn_enabled = False
                 try:
-                    await expect_async(submit).to_be_enabled(timeout=10000)
+                    # [patch 2026-10-29] This used to be a hardcoded 10000ms, which
+                    # ignored the SUBMIT_BUTTON_ENABLE_TIMEOUT_MS setting entirely.
+                    from config.timeouts import (
+                        SUBMIT_BUTTON_ENABLE_TIMEOUT_MS as _SUBMIT_TIMEOUT_MS,
+                    )
+
+                    await expect_async(submit).to_be_enabled(
+                        timeout=_SUBMIT_TIMEOUT_MS
+                    )
                     is_btn_enabled = True
                 except Exception:
                     self.logger.warning(
@@ -201,18 +221,21 @@ class PageController(
 
                 if not button_clicked:
                     # Keyboard fallbacks (using logic inherited from InputController)
+                    # [patch 2026-10-29] Ctrl+Enter FIRST: plain Enter fails its
+                    # verification on the current UI almost every time (~5s wasted),
+                    # while Ctrl+Enter was verified reliable. Enter is now fallback.
                     self.logger.info(
-                        f"[{self.req_id}] Attempting Enter key submission..."
+                        f"[{self.req_id}] Attempting Combo (Ctrl+Enter) key submission first..."
                     )
-                    if await self._try_enter_submit(
+                    if await self._try_combo_submit(
                         textarea, check_client_disconnected
                     ):
                         button_clicked = True
                     else:
                         self.logger.info(
-                            f"[{self.req_id}] Attempting Combo key submission..."
+                            f"[{self.req_id}] Combo submission failed, attempting Enter key submission..."
                         )
-                        if await self._try_combo_submit(
+                        if await self._try_enter_submit(
                             textarea, check_client_disconnected
                         ):
                             button_clicked = True

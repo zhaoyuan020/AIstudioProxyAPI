@@ -189,6 +189,20 @@ class Launcher:  # pragma: no cover
 
     def _handle_auth_file_selection(self):
         if self.final_launch_mode == "debug" and not self.args.active_auth_json:
+            # [patch 2026-10-29] If the save target was already provided on the
+            # command line, skip BOTH interactive prompts. This avoids
+            # input_with_timeout(), whose timed-out reader thread keeps blocking
+            # on stdin and swallows the answer typed for the NEXT prompt.
+            if self.args.auto_save_auth and self.args.save_auth_as:
+                self.args.auto_save_auth_from_cli = True
+                logger.info(
+                    f"Auth will be saved as: {self.args.save_auth_as}.json "
+                    f"(from CLI, interactive prompts skipped)"
+                )
+                if self.effective_active_auth_json_path:
+                    self.effective_active_auth_json_path = None
+                return
+
             create_new_auth_choice = (
                 input_with_timeout(
                     "  Create and save new auth file? (y/n; Default: n, 15s timeout): ",

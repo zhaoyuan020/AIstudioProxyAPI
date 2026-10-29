@@ -674,7 +674,15 @@ class SchemaConverter:
         # Description is optional but recommended
         description = source.get("description")
         if description and isinstance(description, str):
-            gemini_declaration["description"] = description
+            # [patch 2026-10-29] Bound very long descriptions (Codex ships some
+            # 5000+ char ones) so the declarations payload stays manageable.
+            _MAX_DESC_CHARS = 1000
+            if len(description) > _MAX_DESC_CHARS:
+                gemini_declaration["description"] = (
+                    description[: _MAX_DESC_CHARS - 3] + "..."
+                )
+            else:
+                gemini_declaration["description"] = description
 
         # Parameters are optional (some functions have no params)
         parameters = source.get("parameters")
@@ -778,8 +786,20 @@ class SchemaConverter:
                         return cleaned
 
         # 2. Handle Const Conversion: const -> enum
+        # [patch 2026-10-29] Gemini / AI Studio requires `enum` to be string[].
+        # A non-string const (e.g. const: true) used to become enum: [True], which
+        # AI Studio rejects with:
+        #   Error in parameters: "enum" must be a list of strings
+        # Keep such constraints as a description hint instead of an enum.
         if "const" in schema:
-            cleaned["enum"] = [schema["const"]]
+            _const_val = schema["const"]
+            if isinstance(_const_val, str):
+                cleaned["enum"] = [_const_val]
+            else:
+                _hint = f"(must be {json.dumps(_const_val, ensure_ascii=False)})"
+                _base = schema.get("description") or ""
+                if _hint not in _base:
+                    cleaned["description"] = (_base + " " + _hint).strip()
 
         # 3. Handle Type Normalization: ["string", "null"] -> "string" + nullable
         if "type" in schema:
@@ -801,7 +821,13 @@ class SchemaConverter:
                 cleaned["type"] = self._normalize_type(raw_type)
 
         # 4. Handle properties recursively (must do before the loop)
-        if "properties" in schema and isinstance(schema["properties"], dict):
+        # [patch 2026-10-29] Skip empty properties dicts: `"properties": {}` is
+        # pointless and some AI Studio validators reject it.
+        if (
+            "properties" in schema
+            and isinstance(schema["properties"], dict)
+            and schema["properties"]
+        ):
             cleaned["properties"] = {
                 prop_name: self._clean_parameters(prop_schema)
                 for prop_name, prop_schema in schema["properties"].items()
@@ -823,6 +849,19 @@ class SchemaConverter:
 
             # Only copy fields that Gemini accepts
             if key not in self.ALLOWED_SCHEMA_FIELDS:
+                continue
+
+            # [patch 2026-10-29] enum must be string[] for AI Studio; drop any
+            # non-string values and drop the key entirely if nothing is left.
+            if key == "enum":
+                if isinstance(value, list):
+                    _kept_enum = [v for v in value if isinstance(v, str)]
+                    if _kept_enum and key not in cleaned:
+                        cleaned[key] = _kept_enum
+                continue
+
+            # [patch 2026-10-29] An empty `required: []` is meaningless to AI Studio.
+            if key == "required" and value == []:
                 continue
 
             # Copy allowed fields as-is (properties/items already handled above)

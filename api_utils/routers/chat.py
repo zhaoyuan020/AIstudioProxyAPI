@@ -1,5 +1,7 @@
 import asyncio
+import json
 import logging
+import os
 import random
 import time
 from asyncio import Future, Queue
@@ -37,6 +39,40 @@ async def chat_completions(
     set_source("API")
 
     logger.info(f"Received /v1/chat/completions request (Stream={request.stream})")
+
+    # [patch 2026-10-29] Optional raw request dump, controlled by DUMP_REQUESTS.
+    # Writes the exact body the client sent to logs/requests/ so the `tools`
+    # array can be inspected offline. Disabled by default.
+    try:
+        _dump_on = get_environment_variable("DUMP_REQUESTS", "false").lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
+        if _dump_on:
+            _dir = os.path.join("logs", "requests")
+            os.makedirs(_dir, exist_ok=True)
+            _stamp = time.strftime("%Y%m%d_%H%M%S")
+            _path = os.path.join(_dir, f"req_{_stamp}_{req_id}.json")
+            _text = ""
+            try:
+                _raw = await http_request.body()
+                if _raw:
+                    _text = _raw.decode("utf-8", "replace")
+            except Exception:
+                _text = ""
+            if not _text.strip():
+                _text = json.dumps(request.model_dump(), ensure_ascii=False)
+            with open(_path, "w", encoding="utf-8") as _f:
+                _f.write(_text)
+            _tool_count = len(request.tools) if request.tools else 0
+            logger.info(
+                f"[{req_id}] request dumped: {_path} "
+                f"(tools={_tool_count}, bytes={len(_text)})"
+            )
+    except Exception as _dump_err:
+        logger.warning(f"[{req_id}] request dump failed: {_dump_err}")
 
     launch_mode = get_environment_variable("LAUNCH_MODE", "unknown")
     browser_page_critical = launch_mode != "direct_debug_no_browser"

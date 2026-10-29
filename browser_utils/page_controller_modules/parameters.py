@@ -42,10 +42,19 @@ class ParameterController(BaseController):
         )
 
         # Adjust Temperature
-        temp_to_set = request_params.get("temperature", DEFAULT_TEMPERATURE)
-        await self._adjust_temperature(
-            temp_to_set, page_params_cache, params_cache_lock, check_client_disconnected
-        )
+        # [patch 2026-10-29] Only touch the UI when the client actually sent it.
+        # The temperature control is no longer rendered on the current AI Studio
+        # UI (it sits inside the collapsed "advanced settings" panel), so pushing
+        # the DEFAULT value there only wasted ~1.2s and cleared the param cache on
+        # every request. Absent => leave the UI default alone.
+        temp_to_set = request_params.get("temperature")
+        if temp_to_set is not None:
+            await self._adjust_temperature(
+                temp_to_set,
+                page_params_cache,
+                params_cache_lock,
+                check_client_disconnected,
+            )
         await self._check_disconnect(
             check_client_disconnected, "After Temperature Adjustment"
         )
@@ -67,17 +76,26 @@ class ParameterController(BaseController):
         )
 
         # Adjust Stop Sequences
-        stop_to_set = request_params.get("stop", DEFAULT_STOP_SEQUENCES)
+        # [patch 2026-10-29] Never push DEFAULT_STOP_SEQUENCES automatically, but
+        # still call the adjuster with an empty list when the client sent nothing:
+        # that removes any stop word left over from a previous request, so the
+        # setting does not leak between callers.
+        stop_to_set = request_params.get("stop") or []
         await self._adjust_stop_sequences(
-            stop_to_set, page_params_cache, params_cache_lock, check_client_disconnected
+            stop_to_set,
+            page_params_cache,
+            params_cache_lock,
+            check_client_disconnected,
         )
         await self._check_disconnect(
             check_client_disconnected, "After Stop Sequences Adjustment"
         )
 
         # Adjust Top P
-        top_p_to_set = request_params.get("top_p", DEFAULT_TOP_P)
-        await self._adjust_top_p(top_p_to_set, check_client_disconnected)
+        # [patch 2026-10-29] Same rule as temperature: only when explicitly sent.
+        top_p_to_set = request_params.get("top_p")
+        if top_p_to_set is not None:
+            await self._adjust_top_p(top_p_to_set, check_client_disconnected)
         await self._check_disconnect(
             check_client_disconnected, "End Parameter Adjustment"
         )
@@ -137,7 +155,7 @@ class ParameterController(BaseController):
             temp_input_locator = self.page.locator(TEMPERATURE_INPUT_SELECTOR)
 
             try:
-                await expect_async(temp_input_locator).to_be_visible(timeout=5000)
+                await expect_async(temp_input_locator).to_be_visible(timeout=1200)
                 await self._check_disconnect(
                     check_client_disconnected,
                     "Temperature adjustment - after input visible",
@@ -200,9 +218,12 @@ class ParameterController(BaseController):
                     f"Error operating temperature input: {pw_err}. Clearing cache."
                 )
                 page_params_cache.pop("temperature", None)
-                from browser_utils.operations import save_error_snapshot
-
-                await save_error_snapshot(f"temperature_playwright_error_{self.req_id}")
+                # [patch 2026-10-29] Benign: the temperature input is absent on the
+                # current AI Studio UI. Saving png+html snapshots on every single
+                # request wasted disk and time, so snapshots are disabled here.
+                self.logger.debug(
+                    f"Temperature input not present, skipped (no snapshot): {pw_err}"
+                )
                 if isinstance(pw_err, ClientDisconnectedError):
                     raise
 
@@ -264,7 +285,7 @@ class ParameterController(BaseController):
             max_tokens_input_locator = self.page.locator(MAX_OUTPUT_TOKENS_SELECTOR)
 
             try:
-                await expect_async(max_tokens_input_locator).to_be_visible(timeout=5000)
+                await expect_async(max_tokens_input_locator).to_be_visible(timeout=1200)
                 await self._check_disconnect(
                     check_client_disconnected,
                     "Max Tokens adjustment - after input visible",
@@ -421,7 +442,7 @@ class ParameterController(BaseController):
 
                 # 2. Add missing sequences
                 if to_add:
-                    await expect_async(stop_input_locator).to_be_visible(timeout=5000)
+                    await expect_async(stop_input_locator).to_be_visible(timeout=1200)
                     for seq in to_add:
                         await self._check_disconnect(
                             check_client_disconnected, f"Adding stop: {seq}"
@@ -452,9 +473,11 @@ class ParameterController(BaseController):
                     raise
                 self.logger.error(f"Stop Sequences error: {e}")
                 page_params_cache.pop("stop_sequences", None)
-                from browser_utils.operations import save_error_snapshot
-
-                await save_error_snapshot(f"stop_sequence_error_{self.req_id}")
+                # [patch 2026-10-29] Benign: "Add stop token" input is absent on the
+                # current AI Studio UI. Snapshot disabled (same reason as temperature).
+                self.logger.debug(
+                    f"Stop sequences input not present, skipped (no snapshot): {e}"
+                )
                 if isinstance(e, ClientDisconnectedError):
                     raise
 
@@ -469,7 +492,7 @@ class ParameterController(BaseController):
 
         top_p_input_locator = self.page.locator(TOP_P_INPUT_SELECTOR)
         try:
-            await expect_async(top_p_input_locator).to_be_visible(timeout=5000)
+            await expect_async(top_p_input_locator).to_be_visible(timeout=1200)
             await self._check_disconnect(
                 check_client_disconnected, "Top P adjustment - after input visible"
             )
@@ -511,9 +534,9 @@ class ParameterController(BaseController):
             if isinstance(e, asyncio.CancelledError):
                 raise
             self.logger.error(f"Error adjusting Top P: {e}")
-            from browser_utils.operations import save_error_snapshot
-
-            await save_error_snapshot(f"top_p_error_{self.req_id}")
+            # [patch 2026-10-29] Benign: top P input is absent on the current UI.
+            # Snapshot disabled (same reason as temperature / stop sequences).
+            self.logger.debug(f"Top P input not present, skipped (no snapshot): {e}")
             if isinstance(e, ClientDisconnectedError):
                 raise
 

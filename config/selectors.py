@@ -76,7 +76,12 @@ COPY_MARKDOWN_BUTTON_SELECTOR_ALT = 'div[role="menu"] button:has-text("Copy Mark
 
 # --- Settings Selectors ---
 MAX_OUTPUT_TOKENS_SELECTOR = 'input[aria-label="Maximum output tokens"]'
-STOP_SEQUENCE_INPUT_SELECTOR = 'input[aria-label="Add stop token"]'
+# [patch 2026-10-29] AI Studio renamed the label: "Add stop token" -> "Add stop sequence".
+# Kept the old label as a fallback selector for older UI builds.
+STOP_SEQUENCE_INPUT_SELECTOR = (
+    'input[aria-label="Add stop sequence"], '
+    'input[aria-label="Add stop token"]'
+)
 MAT_CHIP_REMOVE_BUTTON_SELECTOR = 'mat-chip button.remove-button[aria-label*="Remove"]'
 TOP_P_INPUT_SELECTOR = (
     'ms-slider input[type="number"][max="1"], '

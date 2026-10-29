@@ -122,7 +122,12 @@ class InputController(BaseController):
                 self.logger.error(
                     f"Timeout or error waiting for submit button enabled: {e_pw_enabled}"
                 )
-                await save_error_snapshot(f"submit_button_enable_timeout_{self.req_id}")
+                # [patch 2026-10-29] Benign: the submit button stays disabled on the
+                # current UI (fill() does not fire the framework input event). The
+                # keyboard fallback below handles it, so skip the png+html snapshot.
+                self.logger.debug(
+                    f"Submit button enable wait failed, falling back to keyboard (no snapshot)"
+                )
                 raise
 
             await self._check_disconnect(
@@ -161,23 +166,28 @@ class InputController(BaseController):
                 await save_error_snapshot(f"submit_button_click_fail_{self.req_id}")
 
             if not button_clicked:
+                # [patch 2026-10-29] Ctrl+Enter FIRST.
+                # On the current AI Studio UI plain Enter fails verification almost
+                # every time (~5s wasted per request) while Ctrl+Enter was verified
+                # reliable in every logged run. So try the combo key first and keep
+                # plain Enter only as a fallback.
                 self.logger.info(
-                    "Button submit failed, attempting Enter key submission..."
+                    "Button submit failed, attempting combo (Ctrl+Enter) submission first..."
                 )
-                submitted_successfully = await self._try_enter_submit(
+                combo_ok = await self._try_combo_submit(
                     prompt_textarea_locator, check_client_disconnected
                 )
-                if not submitted_successfully:
+                if not combo_ok:
                     self.logger.info(
-                        "Enter submission failed, attempting combo key submission..."
+                        "Combo submission failed, falling back to Enter key submission..."
                     )
-                    combo_ok = await self._try_combo_submit(
+                    submitted_successfully = await self._try_enter_submit(
                         prompt_textarea_locator, check_client_disconnected
                     )
-                    if not combo_ok:
-                        self.logger.error("Combo key submission also failed.")
+                    if not submitted_successfully:
+                        self.logger.error("Enter key submission also failed.")
                         raise Exception(
-                            "Submit failed: Button, Enter, and Combo key all failed"
+                            "Submit failed: Button, Combo and Enter key all failed"
                         )
 
             await self._check_disconnect(check_client_disconnected, "After Submit")

@@ -390,16 +390,20 @@ async def _handle_auxiliary_stream_response(
 
         model_name_for_json = current_ai_studio_model_id or MODEL_NAME
 
-        # Consolidate reasoning content with body content
-        consolidated_content = ""
-        if reasoning_content and reasoning_content.strip():
-            consolidated_content += reasoning_content.strip()
-        if content and content.strip():
-            if consolidated_content:
-                consolidated_content += "\n\n"
-            consolidated_content += content.strip()
+        # [patch 2026-10-29] Thinking is no longer merged into `content`.
+        # INCLUDE_THINKING=false (default) -> thinking dropped entirely.
+        # INCLUDE_THINKING=true            -> thinking returned in `reasoning_content`.
+        from config.settings import INCLUDE_THINKING as _INCLUDE_THINKING
+
+        _thinking_text = ""
+        if _INCLUDE_THINKING and reasoning_content and reasoning_content.strip():
+            _thinking_text = reasoning_content.strip()
+
+        consolidated_content = content.strip() if content and content.strip() else ""
 
         message_payload = {"role": "assistant", "content": consolidated_content}
+        if _thinking_text:
+            message_payload["reasoning_content"] = _thinking_text
         finish_reason_val = "stop"
 
         if functions and len(functions) > 0:
@@ -557,13 +561,16 @@ async def _handle_playwright_response(
                 f"[{req_id}] Successfully retrieved content directly ({len(final_content)} chars)"
             )
 
-        consolidated_content = ""
-        if reasoning_content and reasoning_content.strip():
-            consolidated_content += reasoning_content.strip()
-        if final_content and final_content.strip():
-            if consolidated_content:
-                consolidated_content += "\n\n"
-            consolidated_content += final_content.strip()
+        # [patch 2026-10-29] Same unified thinking handling as the aux-stream path.
+        from config.settings import INCLUDE_THINKING as _INCLUDE_THINKING
+
+        _thinking_text = ""
+        if _INCLUDE_THINKING and reasoning_content and reasoning_content.strip():
+            _thinking_text = reasoning_content.strip()
+
+        consolidated_content = (
+            final_content.strip() if final_content and final_content.strip() else ""
+        )
 
         usage_stats = calculate_usage_stats(
             [msg.model_dump() for msg in request.messages],
@@ -599,6 +606,8 @@ async def _handle_playwright_response(
             )
         else:
             message_payload = {"role": "assistant", "content": consolidated_content}
+            if _thinking_text:
+                message_payload["reasoning_content"] = _thinking_text
             finish_reason_val = "stop"
 
         response_payload = build_chat_completion_response_json(

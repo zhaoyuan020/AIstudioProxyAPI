@@ -138,6 +138,9 @@ async def gen_sse_from_aux_stream(
     logger = logging.getLogger("AIStudioProxyServer")
     set_request_id(req_id)
 
+    # [patch 2026-10-29] Unified thinking switch (see config/settings.py).
+    from config.settings import INCLUDE_THINKING as _INCLUDE_THINKING
+
     last_reason_pos = 0
     last_body_pos = 0
     chat_completion_id = f"{CHAT_COMPLETION_ID_PREFIX}{req_id}-{int(time.time())}-{random.randint(100, 999)}"
@@ -253,7 +256,8 @@ async def gen_sse_from_aux_stream(
                 full_body_content = body
 
             # The Latch: Reasoning Handling
-            if len(reason) > last_reason_pos:
+            # [patch 2026-10-29] Only emit thinking when INCLUDE_THINKING is on.
+            if _INCLUDE_THINKING and len(reason) > last_reason_pos:
                 reason_delta = reason[last_reason_pos:]
                 if not has_started_body:
                     output = {
@@ -461,7 +465,9 @@ async def gen_sse_from_aux_stream(
             usage_stats = calculate_usage_stats(
                 [msg.model_dump() for msg in request.messages],
                 full_body_content,
-                full_reasoning_content,
+                # [patch 2026-10-29] do not inflate completion tokens with
+                # thinking content when it is not being returned.
+                full_reasoning_content if _INCLUDE_THINKING else "",
             )
             total_tokens = usage_stats.get("total_tokens", 0)
             GlobalState.increment_token_count(total_tokens)

@@ -141,6 +141,14 @@ THINKING_BUDGET_HIGH = _get_thinking_budget_value("THINKING_BUDGET_HIGH", 32000,
 
 DEFAULT_THINKING_LEVEL = os.environ.get("DEFAULT_THINKING_LEVEL", "low")
 
+# [patch 2026-10-29] Whether to return the model's thinking / reasoning content.
+#   false (default) -> thinking is dropped entirely. Neither streaming nor
+#                      non-streaming responses expose it.
+#   true            -> thinking is returned in the `reasoning_content` field
+#                      (both paths behave the same; it is NEVER merged into
+#                      `content`).
+INCLUDE_THINKING = get_boolean_env("INCLUDE_THINKING", False)
+
 # --- Function Calling Configuration ---
 # Mode: "emulated" | "native" | "auto"
 # - "emulated": Current text-based approach (default, backwards compatible)

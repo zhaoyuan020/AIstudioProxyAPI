@@ -362,7 +362,12 @@ async def queue_worker() -> None:
                             except ClientDisconnectedError:
                                 pass
                             except Exception:
-                                await save_error_snapshot(f"button_timeout_{req_id}")
+                                # [patch 2026-10-29] Benign on current UI (button state
+                                # never settles). Snapshot disabled to stop writing
+                                # png+html on every single request.
+                                logger.debug(
+                                    f"[{req_id}] post-stream submit button state check failed (no snapshot)"
+                                )
 
                     except QuotaExceededError:
                         raise
