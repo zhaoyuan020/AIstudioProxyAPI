@@ -9,7 +9,7 @@
 > grep -rn "\[patch 2026-10-29\]" --include="*.py" .
 > ```
 >
-> 备份目录（补丁前原件）：`C:\Users\zhaoy\WorkBuddy\Claw\credentials_backup\aistudio_*.bak_*`
+> 备份目录（补丁前原件）：项目目录之外的 `credentials_backup/aistudio_*.bak_*`
 
 ---
 
